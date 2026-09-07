@@ -15,18 +15,20 @@ PATH_STOCK = PATH_SOURCE / 'stock'
 
 
 def main() -> None:
+    start_time = time.time()
      # 1. Задаем стартовую дату (2025-05-01) и конечную (2025-07-31)
     # stock_start = duckdb.sql(f"SELECT * FROM '{PATH_STOCK}/stock_2025_04_30.csv' LIMIT 5").df()
     # print(stock_start)
     # invent_trans = duckdb.sql(f"SELECT * FROM '{PATH_TRANS}/invent_trans_2025_05.csv' LIMIT 5").df()
     # print(invent_trans)
-
     # use_date= datetime.now().strftime('%Y-%m-%d')
+    start_stock_files = sorted(PATH_STOCK.glob('stock_*.csv'))[-1]
     invent_trans_files = sorted(PATH_TRANS.glob('invent_trans_*.csv'))
-    start_time = time.time()
-   
+
+    duckdb.sql(f"CREATE TEMP TABLE temp_start_stock_table AS SELECT * FROM '{start_stock_files}'")
+    
     for file in invent_trans_files:
-        duckdb.sql(f"CREATE OR REPLACE TEMP TABLE temp_table AS SELECT * FROM '{file}'")
+        duckdb.sql(f"CREATE TEMP TABLE temp_invent_trans_table AS SELECT * FROM '{file}'")
         # выдаёт кусок текста послностью совпадающий с шаблоном 
         file_date = re.search(r'\d{4}_\d{2}', file.name).group(0).replace('_','-')
         year=int(file_date.split('-')[0])
@@ -39,13 +41,21 @@ def main() -> None:
                 use_date=f"{file_date}-{i}"
             
             output_file = PATH_STOCK / f"stock_{use_date.replace('-','_')}.csv"
-            result=duckdb.sql(f"COPY (SELECT * FROM temp_table where trans_date = '{use_date}') TO '{output_file}' (FORMAT CSV, HEADER TRUE, DELIMITER ';');")
-            # result=duckdb.sql(f"SELECT * FROM temp_table where trans_date = '{use_date}'").df()
+            # print(output_file)
+            result=duckdb.sql("copy (select item_id, location_id, trans_date, SUM(qty), SUM(cost_amount) from ("
+                              "select * from temp_start_stock_table union all select * from temp_invent_trans_table)"
+                              f"group by item_id, location_id, trans_date) TO '{str(output_file)}' (format csv, header true, delimiter ';');")
+
+            
+            # result=duckdb.sql(f"COPY (SELECT * FROM temp_invent_trans_table WHERE trans_date = '{use_date}') TO '{output_file}' (format csv, header true, delimiter ';');")
+            # result=duckdb.sql(f"SELECT * FROM temp_invent_trans_table where trans_date = '{use_date}'").df()
             # result.to_csv(output_file, index=False, sep=';')
-        #duckdb.sql("DROP TABLE IF EXISTS temp_table")
+        duckdb.sql("drop table if exists temp_invent_trans_table")
+    duckdb.sql("DROP TABLE IF EXISTS temp_start_stock_table")
+
     end_time = time.time()
     execution_time = end_time - start_time
-    print(f"Общее время работы: {execution_time:.2f} секунд.")
+    print(f"Общее время : {execution_time:.2f} секунд.")
     # 2. Оптимально: С помощью DuckDB один раз агрегируем тяжелые 4ГБ файлы движений 
     # из папки PATH_TRANS во временную легкую таблицу в памяти.
     
