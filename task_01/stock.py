@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime
 import re 
 import duckdb
+import time
 # & "path/python.exe" -m venv .venv    
 # uv pip install duckdb numpy pandas
 
@@ -22,21 +23,29 @@ def main() -> None:
 
     # use_date= datetime.now().strftime('%Y-%m-%d')
     invent_trans_files = sorted(PATH_TRANS.glob('invent_trans_*.csv'))
+    start_time = time.time()
+   
     for file in invent_trans_files:
+        duckdb.sql(f"CREATE OR REPLACE TEMP TABLE temp_table AS SELECT * FROM '{file}'")
         # выдаёт кусок текста послностью совпадающий с шаблоном 
         file_date = re.search(r'\d{4}_\d{2}', file.name).group(0).replace('_','-')
-        # print(use_date)
-        
-        # print(output_file)
-        for i in range (1,31):
-            
+        year=int(file_date.split('-')[0])
+        month=int(file_date.split('-')[1])
+        num_days=get_days_in_month(year, month)
+        for i in range (1,num_days):
             if i <10:
                 use_date=f"{file_date}-0{i}"
             else:
                 use_date=f"{file_date}-{i}"
-            result=duckdb.sql(f"SELECT * FROM '{file}' where trans_date = '{use_date}'").df()
+            
             output_file = PATH_STOCK / f"stock_{use_date.replace('-','_')}.csv"
-            result.to_csv(output_file, index=False, sep=';')
+            result=duckdb.sql(f"COPY (SELECT * FROM temp_table where trans_date = '{use_date}') TO '{output_file}' (FORMAT CSV, HEADER TRUE, DELIMITER ';');")
+            # result=duckdb.sql(f"SELECT * FROM temp_table where trans_date = '{use_date}'").df()
+            # result.to_csv(output_file, index=False, sep=';')
+        #duckdb.sql("DROP TABLE IF EXISTS temp_table")
+    end_time = time.time()
+    execution_time = end_time - start_time
+    print(f"Общее время работы: {execution_time:.2f} секунд.")
     # 2. Оптимально: С помощью DuckDB один раз агрегируем тяжелые 4ГБ файлы движений 
     # из папки PATH_TRANS во временную легкую таблицу в памяти.
     
@@ -46,6 +55,21 @@ def main() -> None:
         # - Считаем новые остатки
         # - Сохраняем новый файл 'сегодня' в папку PATH_STOCK
     pass
+
+def get_days_in_month(year: int, month: int) -> int:
+    match month:
+        case 4 | 6 | 9 | 11:
+            return 30
+        case 1 | 3 | 5 | 7 | 8 | 10 | 12:
+            return 31
+        case 2:
+            # високосный год
+            if (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0):
+                return 29
+            return 28
+        case _:
+            raise ValueError("Неверный номер месяца")
+        
 
 
 if __name__ == "__main__":
